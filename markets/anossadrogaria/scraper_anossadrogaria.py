@@ -172,17 +172,20 @@ def _standardize(raw: Dict, cat_label: str) -> Optional[Dict]:
     sellers = item0.get("sellers") or []
     offer   = (sellers[0].get("commertialOffer") or {}) if sellers else {}
 
-    # A Nossa Drogaria's ListPrice is an inflated PMC/reference (e.g. R$112 for a
-    # product sold at R$7.99) — using it as "de" would fake a ~90% promo on almost
-    # everything. The real pre-promotion price is PriceWithoutDiscount, so use that
-    # as the regular price and only flag a promo when Price is actually lower.
-    # (Verified: 0/400 sampled had Price < PriceWithoutDiscount — no real promos.)
-    sell    = _to_float(offer.get("Price"))
-    pwd     = _to_float(offer.get("PriceWithoutDiscount"))
-    regular = pwd if (pwd is not None and pwd > 0) else sell
-    if regular is None or regular <= 0:
+    # ListPrice = "de", Price = "por" (standard VTEX). This IS the store's real
+    # promo signal (e.g. sany-d 28.96 -> 26.29 = 9%). PriceWithoutDiscount is
+    # useless here (== Price even on promo). NOTE: for many medicines ListPrice is
+    # the PMC (regulated max), so some discounts look large — that's what the store
+    # encodes/shows; the selling price (promo_price = Price) is what matters for
+    # comparison.
+    regular = _to_float(offer.get("ListPrice"))
+    promo   = _to_float(offer.get("Price"))
+    if not regular or regular <= 0:
+        regular = promo
+    if not regular or regular <= 0:
         return None
-    promo   = sell if (sell is not None and 0 < sell < regular) else None
+    if promo and promo >= regular:
+        promo = None
 
     discount_pct = (
         round((1 - promo / regular) * 100, 1)
